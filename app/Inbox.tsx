@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { EmailRoute, SeedEmail } from "@/lib/seedEmails";
+import { createAuditEvent, type AuditEvent } from "@/lib/auditLog";
 
 const SECTIONS: { route: EmailRoute; title: string }[] = [
   { route: "cleanup_review", title: "Cleanup Review" },
@@ -40,7 +41,13 @@ function confidenceTone(confidence: number): string {
 const ACTION_BTN =
   "rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
-export default function Inbox({ emails }: { emails: SeedEmail[] }) {
+export default function Inbox({
+  emails,
+  onAudit,
+}: {
+  emails: SeedEmail[];
+  onAudit: (event: AuditEvent) => void;
+}) {
   const [rows, setRows] = useState<Row[]>(() => toRows(emails));
 
   const selectedCount = useMemo(
@@ -62,12 +69,26 @@ export default function Inbox({ emails }: { emails: SeedEmail[] }) {
       )
     );
 
-  const moveSelectedToTrash = () =>
+  const moveSelectedToTrash = () => {
+    rows
+      .filter((r) => r.selected && r.status === "active")
+      .forEach((r) =>
+        onAudit(
+          createAuditEvent({
+            actor: "user",
+            eventType: "USER_MOVED_TO_TRASH",
+            emailId: r.id,
+            emailSubject: r.subject,
+            details: `Moved to simulated Trash from ${r.route}.`,
+          })
+        )
+      );
     setRows((prev) =>
       prev.map((r) =>
         r.selected ? { ...r, status: "trashed", selected: false } : r
       )
     );
+  };
 
   // Row feedback: flag/unflag as mis-routed. Records the signal only.
   const toggleWrongCategory = (id: string) =>
