@@ -5,7 +5,7 @@ export type AuditActor = "system" | "user" | "ai";
 
 export type AuditEventType =
   | "SYSTEM_PROTECTED_EMAIL"
-  | "USER_CORRECTED_ROUTE"
+  | "USER_FLAGGED_WRONG_CATEGORY"
   | "USER_MOVED_TO_TRASH"
   | "USER_CREATED_PREFERENCE"
   | "SYSTEM_APPLIED_PREFERENCE"
@@ -24,7 +24,7 @@ export type AuditEvent = {
 // Human-readable labels for each event type.
 export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
   SYSTEM_PROTECTED_EMAIL: "Protected email",
-  USER_CORRECTED_ROUTE: "Route corrected",
+  USER_FLAGGED_WRONG_CATEGORY: "Flagged wrong category",
   USER_MOVED_TO_TRASH: "Moved to trash",
   USER_CREATED_PREFERENCE: "Preference created",
   SYSTEM_APPLIED_PREFERENCE: "Preference applied",

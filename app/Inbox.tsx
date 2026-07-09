@@ -19,9 +19,14 @@ const TRASH_DEFAULT_ROUTES: EmailRoute[] = [
   "restock_alert",
 ];
 
-// `flaggedWrong` is user feedback: the user thinks this email is mis-routed.
-// It records the signal only — it never moves the email to another lane.
-type Row = SeedEmail & { selected: boolean; flaggedWrong: boolean };
+// `flaggedWrong` is user feedback: the user thinks this email is mis-routed,
+// and `suggestedRoute` is the lane they think it belongs in. Feedback only —
+// the email never actually moves lanes.
+type Row = SeedEmail & {
+  selected: boolean;
+  flaggedWrong: boolean;
+  suggestedRoute: EmailRoute | null;
+};
 
 function toRows(emails: SeedEmail[]): Row[] {
   return emails.map((e) => ({
@@ -29,7 +34,12 @@ function toRows(emails: SeedEmail[]): Row[] {
     selected:
       e.status === "active" && TRASH_DEFAULT_ROUTES.includes(e.route),
     flaggedWrong: false,
+    suggestedRoute: null,
   }));
+}
+
+function routeTitle(route: EmailRoute | null): string {
+  return SECTIONS.find((s) => s.route === route)?.title ?? "—";
 }
 
 function confidenceTone(confidence: number): string {
@@ -49,6 +59,8 @@ export default function Inbox({
   onAudit: (event: AuditEvent) => void;
 }) {
   const [rows, setRows] = useState<Row[]>(() => toRows(emails));
+  // Which row's "should have been…" category picker is currently open.
+  const [pickerOpenId, setPickerOpenId] = useState<string | null>(null);
 
   const selectedCount = useMemo(
     () => rows.filter((r) => r.selected).length,
@@ -90,13 +102,27 @@ export default function Inbox({
     );
   };
 
-  // Row feedback: flag/unflag as mis-routed. Records the signal only.
-  const toggleWrongCategory = (id: string) =>
+  // Row feedback: the user flags an email as mis-routed and picks the lane it
+  // should have been in. Records the signal only — the email stays put.
+  const flagWrongCategory = (id: string, suggestedRoute: EmailRoute) => {
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    onAudit(
+      createAuditEvent({
+        actor: "user",
+        eventType: "USER_FLAGGED_WRONG_CATEGORY",
+        emailId: row.id,
+        emailSubject: row.subject,
+        details: `Was ${row.route}; user says it should be ${suggestedRoute}.`,
+      })
+    );
     setRows((prev) =>
       prev.map((r) =>
-        r.id === id ? { ...r, flaggedWrong: !r.flaggedWrong } : r
+        r.id === id ? { ...r, flaggedWrong: true, suggestedRoute } : r
       )
     );
+    setPickerOpenId(null);
+  };
 
   const grouped = useMemo(() => {
     const map = new Map<EmailRoute, Row[]>();
@@ -256,20 +282,48 @@ export default function Inbox({
                       </span>
 
                       {/* Feedback */}
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="relative flex shrink-0 items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => toggleWrongCategory(row.id)}
-                          aria-pressed={row.flaggedWrong}
-                          title="Flag this email as mis-routed (feedback only)"
+                          onClick={() =>
+                            setPickerOpenId((cur) =>
+                              cur === row.id ? null : row.id
+                            )
+                          }
+                          aria-expanded={pickerOpenId === row.id}
+                          title="Flag this email as mis-routed and pick where it belongs (feedback only)"
                           className={`${ACTION_BTN} ${
                             row.flaggedWrong
                               ? "bg-amber-600 text-white ring-amber-600"
                               : "bg-amber-50 text-amber-700 ring-amber-600/20 hover:bg-amber-100"
                           }`}
                         >
-                          {row.flaggedWrong ? "Marked wrong ✓" : "Wrong category"}
+                          {row.flaggedWrong
+                            ? `Wrong → ${routeTitle(row.suggestedRoute)}`
+                            : "Wrong category"}
                         </button>
+
+                        {pickerOpenId === row.id && (
+                          <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-md border border-zinc-200 bg-white p-1 shadow-lg">
+                            <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                              Should have been…
+                            </p>
+                            {SECTIONS.filter(
+                              (s) => s.route !== row.route
+                            ).map((s) => (
+                              <button
+                                key={s.route}
+                                type="button"
+                                onClick={() =>
+                                  flagWrongCategory(row.id, s.route)
+                                }
+                                className="block w-full rounded px-2 py-1 text-left text-xs text-zinc-700 hover:bg-zinc-100"
+                              >
+                                {s.title}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
