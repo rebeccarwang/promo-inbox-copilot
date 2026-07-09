@@ -3,6 +3,10 @@
 import { useMemo, useState } from "react";
 import type { EmailRoute, SeedEmail } from "@/lib/seedEmails";
 import { createAuditEvent, type AuditEvent } from "@/lib/auditLog";
+import {
+  fallbackToManualReview,
+  type EmailClassificationResult,
+} from "@/lib/classificationSchema";
 
 const SECTIONS: { route: EmailRoute; title: string }[] = [
   { route: "cleanup_review", title: "Cleanup Review" },
@@ -19,6 +23,15 @@ const TRASH_DEFAULT_ROUTES: EmailRoute[] = [
   "restock_alert",
 ];
 
+// Where a card's current classification came from.
+type Source = "seeded" | "classifier" | "failed";
+
+const SOURCE_LABELS: Record<Source, string> = {
+  seeded: "Source: Seeded",
+  classifier: "Source: Mock classifier",
+  failed: "Source: Classifier failed",
+};
+
 // `flaggedWrong` is user feedback: the user thinks this email is mis-routed,
 // and `suggestedRoute` is the lane they think it belongs in. Feedback only —
 // the email never actually moves lanes.
@@ -26,6 +39,7 @@ type Row = SeedEmail & {
   selected: boolean;
   flaggedWrong: boolean;
   suggestedRoute: EmailRoute | null;
+  source: Source;
 };
 
 function toRows(emails: SeedEmail[]): Row[] {
@@ -35,6 +49,7 @@ function toRows(emails: SeedEmail[]): Row[] {
       e.status === "active" && TRASH_DEFAULT_ROUTES.includes(e.route),
     flaggedWrong: false,
     suggestedRoute: null,
+    source: "seeded" as Source,
   }));
 }
 
@@ -61,6 +76,10 @@ export default function Inbox({
   const [rows, setRows] = useState<Row[]>(() => toRows(emails));
   // Which row's "should have been…" category picker is currently open.
   const [pickerOpenId, setPickerOpenId] = useState<string | null>(null);
+  // Ids of rows with an in-flight classifier request.
+  const [classifyingIds, setClassifyingIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const selectedCount = useMemo(
     () => rows.filter((r) => r.selected).length,
@@ -122,6 +141,92 @@ export default function Inbox({
       )
     );
     setPickerOpenId(null);
+  };
+
+  // Apply a classification result to a row: overwrite the routing fields and
+  // record where it came from. Changing `route` re-groups the card into its
+  // new lane automatically.
+  const applyClassification = (
+    id: string,
+    c: EmailClassificationResult,
+    source: Source
+  ) =>
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              route: c.route,
+              summary: c.summary,
+              reason: c.reason,
+              confidence: c.confidence,
+              isProtected: c.isProtected,
+              protectionReason: c.protectionReason ?? undefined,
+              source,
+            }
+          : r
+      )
+    );
+
+  const setClassifying = (id: string, on: boolean) =>
+    setClassifyingIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  // Call the mock classifier API and apply its result. On any failure the
+  // email falls back to manual_review, mirroring the API's safe default.
+  const runClassifier = async (id: string) => {
+    const row = rows.find((r) => r.id === id);
+    if (!row || classifyingIds.has(id)) return;
+    setClassifying(id, true);
+    try {
+      const res = await fetch("/api/classify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender: row.sender,
+          subject: row.subject,
+          bodyText: row.bodyText,
+        }),
+      });
+      if (!res.ok) throw new Error(`Classifier responded ${res.status}`);
+      const result = (await res.json()) as EmailClassificationResult;
+      applyClassification(id, result, "classifier");
+      onAudit(
+        createAuditEvent({
+          actor: "ai",
+          eventType: "AI_RECOMMENDED_ROUTE",
+          emailId: row.id,
+          emailSubject: row.subject,
+          details: `Recommended ${result.route} at ${Math.round(
+            result.confidence * 100
+          )}% confidence. ${result.reason}`,
+        })
+      );
+    } catch (err) {
+      const fallback = fallbackToManualReview(
+        `Classifier request failed: ${
+          err instanceof Error ? err.message : "unknown error"
+        }.`
+      );
+      applyClassification(id, fallback, "failed");
+      onAudit(
+        createAuditEvent({
+          actor: "ai",
+          eventType: "AI_RECOMMENDED_ROUTE",
+          emailId: row.id,
+          emailSubject: row.subject,
+          details: `Safe fallback to ${fallback.route} at ${Math.round(
+            fallback.confidence * 100
+          )}% confidence. ${fallback.reason}`,
+        })
+      );
+    } finally {
+      setClassifying(id, false);
+    }
   };
 
   const grouped = useMemo(() => {
@@ -240,6 +345,17 @@ export default function Inbox({
                         <p className="truncate text-xs text-zinc-500" title={row.sender}>
                           {row.sender}
                         </p>
+                        <p
+                          className={`truncate text-[10px] font-medium uppercase tracking-wide ${
+                            row.source === "classifier"
+                              ? "text-indigo-600"
+                              : row.source === "failed"
+                              ? "text-rose-600"
+                              : "text-zinc-400"
+                          }`}
+                        >
+                          {SOURCE_LABELS[row.source]}
+                        </p>
                       </div>
 
                       {/* Summary + reason */}
@@ -281,8 +397,18 @@ export default function Inbox({
                         )}
                       </span>
 
-                      {/* Feedback */}
+                      {/* Actions + feedback */}
                       <div className="relative flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => runClassifier(row.id)}
+                          disabled={classifyingIds.has(row.id)}
+                          className={`${ACTION_BTN} bg-indigo-50 text-indigo-700 ring-indigo-600/20 hover:bg-indigo-100`}
+                        >
+                          {classifyingIds.has(row.id)
+                            ? "Classifying…"
+                            : "Run classifier"}
+                        </button>
                         <button
                           type="button"
                           onClick={() =>
