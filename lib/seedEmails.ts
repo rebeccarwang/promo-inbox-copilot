@@ -197,6 +197,30 @@ export const seedEmails: SeedEmail[] = [
     confidence: 0.86,
     status: "active",
   },
+  {
+    id: "email-021",
+    sender: "news@hm.com",
+    subject: "Just dropped: new arrivals for summer",
+    bodyText:
+      "Fresh styles just landed. Explore the latest new arrivals across dresses, tees, and accessories. No sale, no code — just this season's new looks. Shop the collection while sizes last.",
+    route: "cleanup_review",
+    summary: "H&M new-arrivals announcement with no offer or discount (low-value promo).",
+    reason: "Generic 'new arrivals / just dropped' marketing, no deal or deadline. Low-value cleanup candidate.",
+    confidence: 0.62,
+    status: "active",
+  },
+  {
+    id: "email-022",
+    sender: "hello@oldnavy.com",
+    subject: "Back by popular demand 🎉",
+    bodyText:
+      "You asked, we listened. Our fan-favorite fleece is back by popular demand in three new colors. Browse the lineup and find your go-to layer for the season. Nothing on sale — just back by request.",
+    route: "cleanup_review",
+    summary: "Old Navy 'back by popular demand' fleece promo with no discount (low-value marketing).",
+    reason: "Vague 'back by popular demand' marketing, no offer or urgency. Routine cleanup candidate.",
+    confidence: 0.6,
+    status: "active",
+  },
 
   // ---------- manual_review ----------
   {

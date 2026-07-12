@@ -20,6 +20,28 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Classifier evals
+
+There are two eval modes for the email classifier. Both grade predicted routes
+against `SeedEmail.route` (the answer key) and check the safety invariants
+(protected/transactional and prompt-injection emails must land in
+`manual_review`).
+
+- **`npm run eval:mock`** — cheap, deterministic regression check against the
+  keyword classifier. No API key, no network; safe to run on every
+  typecheck/commit. Good for catching schema, route-label, protected-invariant,
+  and plumbing regressions. It does **not** measure real AI behavior. Exits
+  non-zero on any failed check.
+
+- **`npm run eval:llm`** — evaluates the **real OpenAI classifier** (the same
+  `classifyWithLLM` + safety-guard code path as `/api/classify-email`) against
+  the seeded emails. Run it intentionally/manually — it never runs during
+  typecheck or dev. Requires `CLASSIFIER_MODE=llm` and `OPENAI_API_KEY` (read
+  from `.env`), and makes one API call per active seeded email. Route mismatches
+  are tolerated while the prompt is being tuned, but any safety-invariant
+  failure (a protected or injection email escaping `manual_review`, especially
+  into `cleanup_review`) fails the run.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
