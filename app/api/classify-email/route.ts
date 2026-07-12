@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   fallbackToManualReview,
   parseClassification,
+  truncatedFields,
   type EmailClassificationResult,
 } from "@/lib/classificationSchema";
 
@@ -189,7 +190,7 @@ const SYSTEM_PROMPT = `You classify promotional emails for a review-first inbox 
 Return ONLY a JSON object with EXACTLY these keys and types:
 - emailType: one of "generic_promo" | "discount" | "newsletter" | "restock" | "protected" | "uncertain"
 - route: one of "cleanup_review" | "deal_digest" | "subscription_digest" | "restock_alert" | "manual_review"
-- summary: ONE concise sentence describing the email, under 140 characters. No preamble.
+- summary: ONE concise sentence describing the email, no more than 110 characters. No preamble.
 - reason: ONE short sentence explaining the routing choice, under 180 characters.
 - confidence: number between 0 and 1
 - extractedOffer: string or null (discount/coupon details if any)
@@ -271,19 +272,26 @@ function applyGuards(result: EmailClassificationResult): EmailClassificationResu
 
 // Runs the LLM classifier. Parses/validates the model output (invalid output →
 // safe manual_review) and applies the guards. Transport errors propagate.
-async function classifyWithLLM(input: ClassifyInput): Promise<EmailClassificationResult> {
+// `truncated` lists any free-text fields the schema had to shorten, so the
+// caller can surface it in the audit log.
+async function classifyWithLLM(
+  input: ClassifyInput
+): Promise<{ result: EmailClassificationResult; truncated: string[] }> {
   const content = await callOpenAI(input);
 
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(content);
   } catch {
-    return fallbackToManualReview("Model returned non-JSON output.");
+    return { result: fallbackToManualReview("Model returned non-JSON output."), truncated: [] };
   }
 
   // parseClassification validates against EmailClassificationSchema and returns
   // a safe manual_review result if the model output fails validation.
-  return applyGuards(parseClassification(parsedJson));
+  return {
+    result: applyGuards(parseClassification(parsedJson)),
+    truncated: truncatedFields(parsedJson),
+  };
 }
 
 export async function POST(request: Request) {
@@ -321,9 +329,11 @@ export async function POST(request: Request) {
   // We do NOT silently fall back to the mock — the reason makes the failure
   // explicit so it's visible in the UI and audit log.
   try {
-    return NextResponse.json(await classifyWithLLM(parsed.data), {
-      headers: { "X-Classifier-Mode": "llm" },
-    });
+    const { result, truncated } = await classifyWithLLM(parsed.data);
+    const headers: Record<string, string> = { "X-Classifier-Mode": "llm" };
+    // Tell the client which fields the schema had to shorten so it can log it.
+    if (truncated.length > 0) headers["X-Truncated-Fields"] = truncated.join(",");
+    return NextResponse.json(result, { headers });
   } catch (err) {
     const detail = err instanceof Error ? err.message : "unknown error";
     return NextResponse.json(

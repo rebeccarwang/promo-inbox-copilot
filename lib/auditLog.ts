@@ -10,7 +10,8 @@ export type AuditEventType =
   | "USER_CREATED_PREFERENCE"
   | "SYSTEM_APPLIED_PREFERENCE"
   | "AI_RECOMMENDED_ROUTE"
-  | "MOCK_SORTED_ROUTE";
+  | "MOCK_SORTED_ROUTE"
+  | "SYSTEM_TRUNCATED_OUTPUT";
 
 export type AuditEvent = {
   id: string;
@@ -31,6 +32,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
   SYSTEM_APPLIED_PREFERENCE: "Preference applied",
   AI_RECOMMENDED_ROUTE: "Reviewed by AI",
   MOCK_SORTED_ROUTE: "Sorted by keyword rules",
+  SYSTEM_TRUNCATED_OUTPUT: "Output truncated to fit",
 };
 
 type CreateAuditEventInput = Omit<AuditEvent, "id" | "createdAt"> & {

@@ -20,11 +20,15 @@ const SECTIONS: { route: EmailRoute; title: string }[] = [
 // `source` doubles as review status: "seeded" = pending; anything else =
 // reviewed. Seed `route` is ignored for placement until a row is reviewed, so
 // the pre-sorted seed state is never shown.
-type Source = "seeded" | "classifier" | "failed";
+// "fallback" means the deterministic keyword rules sorted the email because
+// OpenAI wasn't used (disabled, no key, or a failed call) — surfaced honestly
+// in the status heading so it never masquerades as an AI review.
+type Source = "seeded" | "classifier" | "fallback" | "failed";
 
 const STATUS_LABELS: Record<Source, string> = {
   seeded: "Pending AI review",
   classifier: "Reviewed by AI",
+  fallback: "Fallback",
   failed: "AI review failed",
 };
 
@@ -242,10 +246,13 @@ export default function Inbox({
         }),
       });
       if (!res.ok) throw new Error(`Classifier responded ${res.status}`);
-      // The API reports which engine actually classified the email.
+      // The API reports which engine actually classified the email. "mock"
+      // means the keyword rules sorted it instead of OpenAI — a fallback.
       const isMock = res.headers.get("x-classifier-mode") === "mock";
+      // Fields the schema had to shorten because the model overshot its limit.
+      const truncated = res.headers.get("x-truncated-fields");
       const result = (await res.json()) as EmailClassificationResult;
-      applyClassification(id, result, "classifier");
+      applyClassification(id, result, isMock ? "fallback" : "classifier");
       onAudit(
         createAuditEvent({
           actor: isMock ? "system" : "ai",
@@ -257,6 +264,17 @@ export default function Inbox({
           )}% confidence. ${result.reason}`,
         })
       );
+      if (truncated) {
+        onAudit(
+          createAuditEvent({
+            actor: "system",
+            eventType: "SYSTEM_TRUNCATED_OUTPUT",
+            emailId: row.id,
+            emailSubject: row.subject,
+            details: `Model output exceeded the length limit; ${truncated} truncated to fit. Routing kept.`,
+          })
+        );
+      }
       logGuardIfAny(row, result);
     } catch (err) {
       const fallback = fallbackToManualReview(
@@ -512,6 +530,8 @@ export default function Inbox({
                         className={`hidden w-24 shrink-0 truncate text-[10px] font-medium uppercase tracking-wide lg:inline ${
                           row.source === "failed"
                             ? "text-rose-600"
+                            : row.source === "fallback"
+                            ? "text-amber-600"
                             : "text-indigo-600"
                         }`}
                       >
