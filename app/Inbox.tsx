@@ -16,20 +16,16 @@ const SECTIONS: { route: EmailRoute; title: string }[] = [
   { route: "manual_review", title: "Manual Review" },
 ];
 
-// Routes whose emails are opted IN (pre-checked for trash) by default.
-const TRASH_DEFAULT_ROUTES: EmailRoute[] = [
-  "deal_digest",
-  "subscription_digest",
-  "restock_alert",
-];
-
-// Where a card's current classification came from.
+// A card is "pending" (unreviewed) until the AI classifier has run on it.
+// `source` doubles as review status: "seeded" = pending; anything else =
+// reviewed. Seed `route` is ignored for placement until a row is reviewed, so
+// the pre-sorted seed state is never shown.
 type Source = "seeded" | "classifier" | "failed";
 
-const SOURCE_LABELS: Record<Source, string> = {
-  seeded: "Source: Seeded",
-  classifier: "Source: Mock classifier",
-  failed: "Source: Classifier failed",
+const STATUS_LABELS: Record<Source, string> = {
+  seeded: "Pending AI review",
+  classifier: "Reviewed by AI",
+  failed: "AI review failed",
 };
 
 // `flaggedWrong` is user feedback: the user thinks this email is mis-routed,
@@ -45,13 +41,14 @@ type Row = SeedEmail & {
 function toRows(emails: SeedEmail[]): Row[] {
   return emails.map((e) => ({
     ...e,
-    selected:
-      e.status === "active" && TRASH_DEFAULT_ROUTES.includes(e.route),
+    selected: false,
     flaggedWrong: false,
     suggestedRoute: null,
     source: "seeded" as Source,
   }));
 }
+
+const isReviewed = (r: Row) => r.source !== "seeded";
 
 function routeTitle(route: EmailRoute | null): string {
   return SECTIONS.find((s) => s.route === route)?.title ?? "—";
@@ -69,9 +66,11 @@ const ACTION_BTN =
 export default function Inbox({
   emails,
   onAudit,
+  onReset,
 }: {
   emails: SeedEmail[];
   onAudit: (event: AuditEvent) => void;
+  onReset: () => void;
 }) {
   const [rows, setRows] = useState<Row[]>(() => toRows(emails));
   // Which row's "should have been…" category picker is currently open.
@@ -80,21 +79,42 @@ export default function Inbox({
   const [classifyingIds, setClassifyingIds] = useState<Set<string>>(
     () => new Set()
   );
+  // True while "Run AI Review" is classifying the whole pending inbox.
+  const [reviewingAll, setReviewingAll] = useState(false);
 
   const selectedCount = useMemo(
     () => rows.filter((r) => r.selected).length,
     [rows]
   );
 
+  const pendingRows = useMemo(
+    () => rows.filter((r) => r.source === "seeded" && r.status === "active"),
+    [rows]
+  );
+
+  // Reviewed rows grouped by their AI-assigned route. Pending rows are excluded
+  // so they only ever appear in the Unreviewed Inbox.
+  const reviewedByRoute = useMemo(() => {
+    const map = new Map<EmailRoute, Row[]>();
+    for (const r of rows) {
+      if (!isReviewed(r)) continue;
+      const bucket = map.get(r.route) ?? [];
+      bucket.push(r);
+      map.set(r.route, bucket);
+    }
+    return map;
+  }, [rows]);
+
   const toggleSelect = (id: string) =>
     setRows((prev) =>
       prev.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r))
     );
 
+  // Select all reviewed, active rows in a lane (pending rows aren't selectable).
   const toggleSectionSelect = (route: EmailRoute, checked: boolean) =>
     setRows((prev) =>
       prev.map((r) =>
-        r.route === route && r.status === "active"
+        isReviewed(r) && r.route === route && r.status === "active"
           ? { ...r, selected: checked }
           : r
       )
@@ -144,8 +164,7 @@ export default function Inbox({
   };
 
   // Apply a classification result to a row: overwrite the routing fields and
-  // record where it came from. Changing `route` re-groups the card into its
-  // new lane automatically.
+  // mark it reviewed. Changing `route` re-groups the card into its new lane.
   const applyClassification = (
     id: string,
     c: EmailClassificationResult,
@@ -176,8 +195,38 @@ export default function Inbox({
       return next;
     });
 
-  // Call the mock classifier API and apply its result. On any failure the
-  // email falls back to manual_review, mirroring the API's safe default.
+  // Log a "Safety guard applied" event when the AI result was forced to Manual
+  // Review by a guard (protected record, or confidence below the 0.7 threshold).
+  const logGuardIfAny = (row: Row, result: EmailClassificationResult) => {
+    if (result.isProtected) {
+      onAudit(
+        createAuditEvent({
+          actor: "system",
+          eventType: "SYSTEM_PROTECTED_EMAIL",
+          emailId: row.id,
+          emailSubject: row.subject,
+          details:
+            result.protectionReason ??
+            "Protected record → routed to Manual Review, never auto-cleaned.",
+        })
+      );
+    } else if (result.confidence < 0.7) {
+      onAudit(
+        createAuditEvent({
+          actor: "system",
+          eventType: "SYSTEM_PROTECTED_EMAIL",
+          emailId: row.id,
+          emailSubject: row.subject,
+          details: `Low confidence (${Math.round(
+            result.confidence * 100
+          )}%) → routed to Manual Review for a human to check.`,
+        })
+      );
+    }
+  };
+
+  // Classify a single email via the API and apply its result. On any transport
+  // failure the email falls back to Manual Review with an explicit reason.
   const runClassifier = async (id: string) => {
     const row = rows.find((r) => r.id === id);
     if (!row || classifyingIds.has(id)) return;
@@ -201,11 +250,12 @@ export default function Inbox({
           eventType: "AI_RECOMMENDED_ROUTE",
           emailId: row.id,
           emailSubject: row.subject,
-          details: `Recommended ${result.route} at ${Math.round(
+          details: `Routed to ${routeTitle(result.route)} at ${Math.round(
             result.confidence * 100
           )}% confidence. ${result.reason}`,
         })
       );
+      logGuardIfAny(row, result);
     } catch (err) {
       const fallback = fallbackToManualReview(
         `Classifier request failed: ${
@@ -219,53 +269,136 @@ export default function Inbox({
           eventType: "AI_RECOMMENDED_ROUTE",
           emailId: row.id,
           emailSubject: row.subject,
-          details: `Safe fallback to ${fallback.route} at ${Math.round(
-            fallback.confidence * 100
-          )}% confidence. ${fallback.reason}`,
+          details: `Safe fallback to Manual Review. ${fallback.reason}`,
         })
       );
+      logGuardIfAny(row, fallback);
     } finally {
       setClassifying(id, false);
     }
   };
 
-  const grouped = useMemo(() => {
-    const map = new Map<EmailRoute, Row[]>();
-    for (const r of rows) {
-      const bucket = map.get(r.route) ?? [];
-      bucket.push(r);
-      map.set(r.route, bucket);
+  // Run the AI classifier across every pending email in the inbox.
+  const runAiReview = async () => {
+    const ids = rows
+      .filter((r) => r.source === "seeded" && r.status === "active")
+      .map((r) => r.id);
+    if (ids.length === 0) return;
+    setReviewingAll(true);
+    try {
+      await Promise.all(ids.map((id) => runClassifier(id)));
+    } finally {
+      setReviewingAll(false);
     }
-    return map;
-  }, [rows]);
+  };
+
+  // Reset the whole demo: emails back to pending, selections cleared, audit
+  // log emptied (via the parent).
+  const resetDemo = () => {
+    setRows(toRows(emails));
+    setPickerOpenId(null);
+    setClassifyingIds(new Set());
+    onReset();
+  };
+
+  const pendingCount = pendingRows.length;
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900">
-      {/* Sticky action bar */}
+      {/* Demo header */}
       <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-3">
           <div>
             <h1 className="text-base font-semibold tracking-tight">
               Promo Inbox Copilot
             </h1>
             <p className="text-xs text-zinc-500">
-              {rows.length} emails · {selectedCount} selected for trash
+              AI-assisted routing for promotional emails, with protected-email
+              guardrails.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={moveSelectedToTrash}
-            disabled={selectedCount === 0}
-            className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Move selected to trash ({selectedCount})
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={runAiReview}
+              disabled={reviewingAll || pendingCount === 0}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {reviewingAll
+                ? "Reviewing…"
+                : `Run AI Review${pendingCount ? ` (${pendingCount})` : ""}`}
+            </button>
+            <button
+              type="button"
+              onClick={moveSelectedToTrash}
+              disabled={selectedCount === 0}
+              className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Move to trash ({selectedCount})
+            </button>
+            <button
+              type="button"
+              onClick={resetDemo}
+              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+            >
+              Reset Demo
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+        {/* Unreviewed Inbox */}
+        {pendingRows.length > 0 && (
+          <section>
+            <div className="mb-2 flex items-center gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+                Unreviewed Inbox
+              </h2>
+              <span className="text-xs text-zinc-400">
+                ({pendingRows.length})
+              </span>
+            </div>
+            <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white">
+              {pendingRows.map((row) => (
+                <div
+                  key={row.id}
+                  className="flex items-center gap-3 px-3 py-2 text-sm"
+                >
+                  <div className="w-56 shrink-0">
+                    <p className="truncate font-medium" title={row.subject}>
+                      {row.subject}
+                    </p>
+                    <p className="truncate text-xs text-zinc-500" title={row.sender}>
+                      {row.sender}
+                    </p>
+                  </div>
+                  <p
+                    className="min-w-0 flex-1 truncate text-xs text-zinc-400"
+                    title={row.bodyText}
+                  >
+                    {row.bodyText}
+                  </p>
+                  <span className="hidden shrink-0 text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:inline">
+                    {STATUS_LABELS.seeded}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => runClassifier(row.id)}
+                    disabled={classifyingIds.has(row.id)}
+                    className={`${ACTION_BTN} bg-indigo-50 text-indigo-700 ring-indigo-600/20 hover:bg-indigo-100`}
+                  >
+                    {classifyingIds.has(row.id) ? "Reviewing…" : "Run AI"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Reviewed lanes */}
         {SECTIONS.map((section) => {
-          const sectionRows = grouped.get(section.route) ?? [];
+          const sectionRows = reviewedByRoute.get(section.route) ?? [];
           const activeRows = sectionRows.filter((r) => r.status === "active");
           const allSelected =
             activeRows.length > 0 && activeRows.every((r) => r.selected);
@@ -294,21 +427,22 @@ export default function Inbox({
               <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white">
                 {sectionRows.length === 0 ? (
                   <p className="px-3 py-4 text-center text-xs text-zinc-400">
-                    No emails in this route.
+                    No emails routed here yet.
                   </p>
                 ) : (
                   <div className="flex items-center gap-3 rounded-t-lg bg-zinc-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
                     <span className="w-3.5 shrink-0" aria-hidden />
                     <span className="w-56 shrink-0">Sender</span>
                     <span className="min-w-0 flex-1">Summary</span>
-                    <span className="hidden w-36 shrink-0 lg:inline">Route</span>
+                    <span className="hidden w-24 shrink-0 lg:inline">Status</span>
                     <span className="w-11 shrink-0 text-center">Conf.</span>
-                    <span className="hidden w-16 shrink-0 text-right md:inline">Status</span>
                     <span className="shrink-0">Feedback</span>
                   </div>
                 )}
                 {sectionRows.map((row) => {
                   const trashed = row.status === "trashed";
+                  const lowConfidence =
+                    row.route === "manual_review" && row.confidence < 0.7;
                   return (
                     <div
                       key={row.id}
@@ -327,7 +461,7 @@ export default function Inbox({
 
                       {/* Sender + subject */}
                       <div className="w-56 shrink-0">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <p
                             className={`truncate font-medium ${
                               trashed ? "line-through" : ""
@@ -341,20 +475,14 @@ export default function Inbox({
                               Protected
                             </span>
                           )}
+                          {lowConfidence && !row.isProtected && (
+                            <span className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 ring-1 ring-inset ring-rose-600/20">
+                              Low confidence
+                            </span>
+                          )}
                         </div>
                         <p className="truncate text-xs text-zinc-500" title={row.sender}>
                           {row.sender}
-                        </p>
-                        <p
-                          className={`truncate text-[10px] font-medium uppercase tracking-wide ${
-                            row.source === "classifier"
-                              ? "text-indigo-600"
-                              : row.source === "failed"
-                              ? "text-rose-600"
-                              : "text-zinc-400"
-                          }`}
-                        >
-                          {SOURCE_LABELS[row.source]}
                         </p>
                       </div>
 
@@ -366,6 +494,11 @@ export default function Inbox({
                         <p className="truncate text-xs text-zinc-400" title={row.reason}>
                           {row.reason}
                         </p>
+                        {lowConfidence && (
+                          <p className="truncate text-xs text-rose-600">
+                            ⚠ Low confidence → Manual Review fallback
+                          </p>
+                        )}
                         {row.isProtected && row.protectionReason && (
                           <p
                             className="truncate text-xs text-emerald-700"
@@ -376,9 +509,15 @@ export default function Inbox({
                         )}
                       </div>
 
-                      {/* Route */}
-                      <span className="hidden w-36 shrink-0 truncate font-mono text-xs text-zinc-400 lg:inline">
-                        {row.route}
+                      {/* Review status */}
+                      <span
+                        className={`hidden w-24 shrink-0 truncate text-[10px] font-medium uppercase tracking-wide lg:inline ${
+                          row.source === "failed"
+                            ? "text-rose-600"
+                            : "text-indigo-600"
+                        }`}
+                      >
+                        {STATUS_LABELS[row.source]}
                       </span>
 
                       {/* Confidence */}
@@ -390,13 +529,6 @@ export default function Inbox({
                         {Math.round(row.confidence * 100)}%
                       </span>
 
-                      {/* Status tag */}
-                      <span className="hidden w-16 shrink-0 text-right text-xs md:inline">
-                        {trashed && (
-                          <span className="text-zinc-400">trashed</span>
-                        )}
-                      </span>
-
                       {/* Actions + feedback */}
                       <div className="relative flex shrink-0 items-center gap-1">
                         <button
@@ -405,9 +537,7 @@ export default function Inbox({
                           disabled={classifyingIds.has(row.id)}
                           className={`${ACTION_BTN} bg-indigo-50 text-indigo-700 ring-indigo-600/20 hover:bg-indigo-100`}
                         >
-                          {classifyingIds.has(row.id)
-                            ? "Classifying…"
-                            : "Run classifier"}
+                          {classifyingIds.has(row.id) ? "Reviewing…" : "Re-run AI"}
                         </button>
                         <button
                           type="button"

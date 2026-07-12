@@ -23,12 +23,12 @@ export type AuditEvent = {
 
 // Human-readable labels for each event type.
 export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
-  SYSTEM_PROTECTED_EMAIL: "Protected email",
-  USER_FLAGGED_WRONG_CATEGORY: "Flagged wrong category",
-  USER_MOVED_TO_TRASH: "Moved to trash",
+  SYSTEM_PROTECTED_EMAIL: "Safety guard applied",
+  USER_FLAGGED_WRONG_CATEGORY: "User feedback recorded",
+  USER_MOVED_TO_TRASH: "Moved to simulated trash",
   USER_CREATED_PREFERENCE: "Preference created",
   SYSTEM_APPLIED_PREFERENCE: "Preference applied",
-  AI_RECOMMENDED_ROUTE: "AI route recommendation",
+  AI_RECOMMENDED_ROUTE: "AI routed email",
 };
 
 type CreateAuditEventInput = Omit<AuditEvent, "id" | "createdAt"> & {

@@ -40,7 +40,7 @@ export default function AuditLog({ events }: { events: AuditEvent[] }) {
                 <span className="w-28 shrink-0 text-xs text-zinc-400">
                   {formatTimestamp(event.createdAt)}
                 </span>
-                <span className="w-40 shrink-0 truncate text-xs font-medium text-zinc-500">
+                <span className="w-44 shrink-0 truncate text-xs font-medium text-zinc-500">
                   {AUDIT_EVENT_LABELS[event.eventType]}
                 </span>
                 <div className="min-w-0 flex-1">
