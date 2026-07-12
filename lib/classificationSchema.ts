@@ -31,8 +31,8 @@ void _allRoutesCovered;
 export const EmailClassificationSchema = z.object({
   emailType: EmailTypeSchema,
   route: z.enum(EMAIL_ROUTES),
-  summary: z.string().max(160),
-  reason: z.string().max(220),
+  summary: z.string().max(120),
+  reason: z.string().max(180),
   confidence: z.number().min(0).max(1),
   extractedOffer: z.string().nullable(),
   productName: z.string().nullable(),
