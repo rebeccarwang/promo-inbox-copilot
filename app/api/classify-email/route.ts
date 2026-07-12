@@ -189,8 +189,8 @@ const SYSTEM_PROMPT = `You classify promotional emails for a review-first inbox 
 Return ONLY a JSON object with EXACTLY these keys and types:
 - emailType: one of "generic_promo" | "discount" | "newsletter" | "restock" | "protected" | "uncertain"
 - route: one of "cleanup_review" | "deal_digest" | "subscription_digest" | "restock_alert" | "manual_review"
-- summary: string, max 300 chars, plain 1-2 sentence summary
-- reason: string, max 500 chars, why you chose this route
+- summary: ONE concise sentence describing the email, under 140 characters. No preamble.
+- reason: ONE short sentence explaining the routing choice, under 180 characters.
 - confidence: number between 0 and 1
 - extractedOffer: string or null (discount/coupon details if any)
 - productName: string or null (product for restock/deal if clear)
@@ -246,7 +246,7 @@ async function callOpenAI(input: ClassifyInput): Promise<string> {
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`OpenAI responded ${res.status} ${detail.slice(0, 200)}`);
+    throw new Error(`OpenAI responded ${res.status} ${detail.slice(0, 100)}`);
   }
 
   const data = await res.json();
@@ -258,22 +258,13 @@ async function callOpenAI(input: ClassifyInput): Promise<string> {
 }
 
 // Post-validation safety guards (LLM output only): protected or low-confidence
-// classifications are forced to manual_review.
+// classifications are forced to manual_review. The reason text is left as the
+// model's own short sentence — the guard is surfaced in the UI badge and the
+// "Safety guard applied" audit entry instead.
 function applyGuards(result: EmailClassificationResult): EmailClassificationResult {
   if (result.route === "manual_review") return result;
-  if (result.isProtected) {
-    return {
-      ...result,
-      route: "manual_review",
-      reason: `${result.reason} [Guard: protected → manual_review.]`,
-    };
-  }
-  if (result.confidence < 0.7) {
-    return {
-      ...result,
-      route: "manual_review",
-      reason: `${result.reason} [Guard: confidence ${result.confidence} < 0.7 → manual_review.]`,
-    };
+  if (result.isProtected || result.confidence < 0.7) {
+    return { ...result, route: "manual_review" };
   }
   return result;
 }

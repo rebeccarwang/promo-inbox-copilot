@@ -488,14 +488,10 @@ export default function Inbox({
                         </p>
                       </div>
 
-                      {/* Summary + reason */}
+                      {/* Summary + reason (shown in full, no truncation) */}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-zinc-700" title={row.summary}>
-                          {row.summary}
-                        </p>
-                        <p className="truncate text-xs text-zinc-400" title={row.reason}>
-                          {row.reason}
-                        </p>
+                        <p className="text-zinc-700">{row.summary}</p>
+                        <p className="text-xs text-zinc-400">{row.reason}</p>
                         {lowConfidence && (
                           <p className="truncate text-xs text-rose-600">
                             ⚠ Low confidence → Manual Review fallback
