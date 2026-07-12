@@ -242,12 +242,14 @@ export default function Inbox({
         }),
       });
       if (!res.ok) throw new Error(`Classifier responded ${res.status}`);
+      // The API reports which engine actually classified the email.
+      const isMock = res.headers.get("x-classifier-mode") === "mock";
       const result = (await res.json()) as EmailClassificationResult;
       applyClassification(id, result, "classifier");
       onAudit(
         createAuditEvent({
-          actor: "ai",
-          eventType: "AI_RECOMMENDED_ROUTE",
+          actor: isMock ? "system" : "ai",
+          eventType: isMock ? "MOCK_SORTED_ROUTE" : "AI_RECOMMENDED_ROUTE",
           emailId: row.id,
           emailSubject: row.subject,
           details: `Routed to ${routeTitle(result.route)} at ${Math.round(

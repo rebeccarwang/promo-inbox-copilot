@@ -315,20 +315,29 @@ export async function POST(request: Request) {
     );
   }
 
+  // The X-Classifier-Mode header tells the client which engine actually
+  // produced the result, so the UI can be honest about mock vs LLM. The JSON
+  // body (validated by EmailClassificationSchema) is unchanged.
+
   // Mock mode (default): deterministic keyword classifier, validated.
   if (!llmEnabled()) {
-    return NextResponse.json(parseClassification(classify(parsed.data)));
+    return NextResponse.json(parseClassification(classify(parsed.data)), {
+      headers: { "X-Classifier-Mode": "mock" },
+    });
   }
 
   // LLM mode: on any OpenAI failure, return a safe manual_review classification.
   // We do NOT silently fall back to the mock — the reason makes the failure
   // explicit so it's visible in the UI and audit log.
   try {
-    return NextResponse.json(await classifyWithLLM(parsed.data));
+    return NextResponse.json(await classifyWithLLM(parsed.data), {
+      headers: { "X-Classifier-Mode": "llm" },
+    });
   } catch (err) {
     const detail = err instanceof Error ? err.message : "unknown error";
     return NextResponse.json(
-      fallbackToManualReview(`LLM classifier failed: ${detail}`)
+      fallbackToManualReview(`LLM classifier failed: ${detail}`),
+      { headers: { "X-Classifier-Mode": "llm-error" } }
     );
   }
 }

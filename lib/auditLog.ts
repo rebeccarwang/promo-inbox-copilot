@@ -9,7 +9,8 @@ export type AuditEventType =
   | "USER_MOVED_TO_TRASH"
   | "USER_CREATED_PREFERENCE"
   | "SYSTEM_APPLIED_PREFERENCE"
-  | "AI_RECOMMENDED_ROUTE";
+  | "AI_RECOMMENDED_ROUTE"
+  | "MOCK_SORTED_ROUTE";
 
 export type AuditEvent = {
   id: string;
@@ -28,7 +29,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
   USER_MOVED_TO_TRASH: "Moved to simulated trash",
   USER_CREATED_PREFERENCE: "Preference created",
   SYSTEM_APPLIED_PREFERENCE: "Preference applied",
-  AI_RECOMMENDED_ROUTE: "AI routed email",
+  AI_RECOMMENDED_ROUTE: "Reviewed by AI",
+  MOCK_SORTED_ROUTE: "Sorted by keyword rules",
 };
 
 type CreateAuditEventInput = Omit<AuditEvent, "id" | "createdAt"> & {
