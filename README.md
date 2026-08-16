@@ -167,4 +167,6 @@ These are deliberate boundaries; the goal is to showcase structured model output
 
 ## License
 
-This is a personal portfolio project shared for demonstration and review. It is **not licensed for reuse**. No permission is granted to copy, modify, or redistribute the code. All rights reserved.
+This is a personal portfolio project shared for demonstration and review only. No permission is granted to copy, modify, distribute, or otherwise reuse the source code. All rights reserved.
+
+The project is provided “as is,” without warranties of any kind, express or implied. The author shall not be liable for any damages, losses, or claims arising from use of or reliance on the project.
