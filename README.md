@@ -73,7 +73,7 @@ Eval Harness over Seeded Emails
 
 - Node.js 20+
 - npm
-- An OpenAI API key (only needed for real LLM mode — see below)
+- An OpenAI API key (only needed for real LLM mode; see below)
 
 ### Install
 
@@ -89,7 +89,7 @@ npm run dev
 
 Then open http://localhost:3000.
 
-By default the app runs in **mock classifier mode**, which uses deterministic keyword rules and requires no API key — so you can clone and run it immediately.
+By default the app runs in **mock classifier mode**, which uses deterministic keyword rules and requires no API key, so you can clone and run it immediately.
 
 ### Classifier modes
 
@@ -113,7 +113,7 @@ CLASSIFIER_MODE=llm
 # Required when CLASSIFIER_MODE=llm
 OPENAI_API_KEY=sk-...
 
-# Optional — defaults to gpt-5-mini
+# Optional; defaults to gpt-5-mini
 OPENAI_MODEL=gpt-5-mini
 ```
 
@@ -121,7 +121,7 @@ OPENAI_MODEL=gpt-5-mini
 
 ## Evals
 
-The project includes an eval harness that runs the classifier against the labeled seed set and reports route accuracy plus safety invariants (protected and prompt-injection emails must never escape Manual Review — a violation fails the run).
+The project includes an eval harness that runs the classifier against the labeled seed set and reports route accuracy plus safety invariants (protected and prompt-injection emails must never escape Manual Review; a violation fails the run).
 
 ```bash
 # Mock classifier (no API key, deterministic)
@@ -167,4 +167,4 @@ These are deliberate boundaries; the goal is to showcase structured model output
 
 ## License
 
-This is a personal portfolio project shared for demonstration and review. It is **not licensed for reuse** — no permission is granted to copy, modify, or redistribute the code. All rights reserved.
+This is a personal portfolio project shared for demonstration and review. It is **not licensed for reuse**. No permission is granted to copy, modify, or redistribute the code. All rights reserved.
