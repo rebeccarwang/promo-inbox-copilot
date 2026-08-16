@@ -1,7 +1,7 @@
 /**
  * eval:llm — evaluates the REAL OpenAI classifier against the seeded emails.
  *
- * This is the Day-3 goal: measuring actual AI behavior, not the keyword mock.
+ * It measures actual AI behavior against real OpenAI, not the keyword mock.
  * It runs intentionally/manually and NEVER during typecheck or dev. It calls
  * the exact same `classifyWithLLM` + safety-guard logic as /api/classify-email,
  * so passing here means production AI behavior is sound.

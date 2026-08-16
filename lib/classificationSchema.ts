@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { EmailRoute } from "./seedEmails";
 
-// Validates future AI email-classifier output. Not wired to any UI, API,
-// or model yet — this is the contract we'll validate responses against.
+// The contract for AI email-classifier output. The API route, the classifier,
+// and the eval harness all validate model responses against this schema.
 
 export const EmailTypeSchema = z.enum([
   "generic_promo",
